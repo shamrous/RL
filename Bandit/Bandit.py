@@ -10,7 +10,7 @@ class Bandit:
     Play function(s) return a reward based on generated distiribution
     '''
 
-    def __init__(self, arms: int, mean: float, stdev: float, stationary: bool = True, fn_step_size: Callable = None) -> None:
+    def __init__(self, arms: int, mean: float, stdev: float, stationary: bool = True, fn_step_size: Callable = None, initQ: float = 0.) -> None:
         assert arms >= 1
         # generate reward means distribuition for each of k actions
         self.arms = arms
@@ -18,6 +18,7 @@ class Bandit:
         self.mean = mean
         self.stdev = stdev
         self.stationary = stationary
+        self.initQ = initQ
         if fn_step_size is None:
             self.fn_step_size = self._step_average
         else:
@@ -25,7 +26,7 @@ class Bandit:
         self.reset()
 
     def reset(self):
-        self.Q = np.zeros(self.arms)
+        self.Q = np.full(self.arms, self.initQ)
         self.nQ = np.zeros(self.arms)
 
     def get_Q(self) -> np.ndarray:
@@ -79,12 +80,12 @@ def estimate_reward(bandit: Bandit, arms: int, eps: float) -> float:
 
 def run_bandits_common(n_bandits: int, steps: int, arms: int, mean: float, stdev: float,
                        all_eps: List[float], stationary: bool, plot_title: str,
-                       fn_step_size: Callable = None) -> None:
+                       fn_step_size: Callable = None, initQ: float = 0.) -> None:
     all_bandits = []
     # Initiliaze bandits once. We will re-use same bandits for different values of eps
     for _ in range(n_bandits):
         all_bandits.append(
-            Bandit(arms, mean, stdev, stationary=stationary, fn_step_size=fn_step_size))
+            Bandit(arms, mean, stdev, stationary=stationary, fn_step_size=fn_step_size, initQ=initQ))
 
     # Find best reward assuming we taking best actions every time
     all_true_q = []
