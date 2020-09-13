@@ -27,7 +27,8 @@ class Bandit:
 
     def reset(self):
         self.Q = np.full(self.arms, self.initQ)
-        self.nQ = np.zeros(self.arms)
+        # number of times each action selected
+        self.nQ = np.zeros(self.arms, dtype = int)
 
     def get_Q(self) -> np.ndarray:
         return self.Q
@@ -35,12 +36,11 @@ class Bandit:
     def get_true_Q(self) -> np.ndarray:
         return self.reward_means
 
-    def _step_average(self, n: int) -> float:
+    def _step_average(self, n: int, action:int) -> float:
         return 1/n
 
     def _random_walk_true_Q(self) -> None:
-        walks = np.random.normal(loc=0, scale=0.01, size=self.arms)
-        self.reward_means += walks
+        self.reward_means += np.random.normal(loc=0, scale=0.01, size=self.arms)
 
     def _update_Q(self, action: int, reward: float) -> None:
         if not self.stationary:
@@ -48,7 +48,7 @@ class Bandit:
 
         self.nQ[action] = self.nQ[action] + 1
         self.Q[action] = self.Q[action] + \
-            (reward - self.Q[action]) * self.fn_step_size(self.nQ[action])
+            (reward - self.Q[action]) * self.fn_step_size(self.nQ[action], action)
 
     def play(self, action: int) -> float:
         assert 0 <= action < self.arms
