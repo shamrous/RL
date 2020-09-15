@@ -1,122 +1,226 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Callable, List
+from functools import partial
+import numpy as np  # type: ignore
+import matplotlib.pyplot as plt  # type: ignore
+from typing import List, Dict, Tuple
 
 
 class Bandit:
     '''
-    k-armed bandit problem in stationary case. Each Bandit instance generate a normal distribuiton for action reward means.
+    k-armed bandit problem emulator. Each Bandit instance generate a normal distribuiton for action reward means.
     Each action rewards also has normal distribuiton with the same mean and stdev.
-    Play function(s) return a reward based on generated distiribution
+    The 'play' function returns a reward based on supported algorithms passed by 'configure' function
     '''
 
-    def __init__(self, arms: int, mean: float, stdev: float, stationary: bool = True, fn_step_size: Callable = None, initQ: float = 0.) -> None:
+    def __init__(self, arms: int, mean: float, stdev: float) -> None:
         assert arms >= 1
         # generate reward means distribuition for each of k actions
         self.arms = arms
         self.reward_means = np.random.normal(loc=mean, scale=stdev, size=arms)
         self.mean = mean
         self.stdev = stdev
-        self.stationary = stationary
-        self.initQ = initQ
-        if fn_step_size is None:
-            self.fn_step_size = self._step_average
-        else:
-            self.fn_step_size = fn_step_size
-        self.reset()
+        self._configured = False
 
-    def reset(self):
-        self.Q = np.full(self.arms, self.initQ)
-        # number of times each action selected
-        self.nQ = np.zeros(self.arms, dtype = int)
+    def reset(self) -> None:
+        '''
+        Reset bandit state but keep the same reward distirbuiton
+        '''
+        self.Q = np.full(self.arms, self.init_Q, dtype=float)
+        # number of times each action is selected
+        self.nQ = np.zeros(self.arms, dtype=int)
+        # rewards mean
+        self.mean_R = 0.0
+        # global step counter
+        self.step = 0
 
-    def get_Q(self) -> np.ndarray:
-        return self.Q
-
-    def get_true_Q(self) -> np.ndarray:
-        return self.reward_means
-
-    def _step_average(self, n: int, action:int) -> float:
+    def _step_sample_average(self, n: int, action: int, params: Dict) -> float:
         return 1/n
 
-    def _random_walk_true_Q(self) -> None:
-        self.reward_means += np.random.normal(loc=0, scale=0.01, size=self.arms)
+    def _step_sample_constant(self, n: int, action: int, params: Dict) -> float:
+        alpha = params['alpha']
+        return alpha
 
-    def _update_Q(self, action: int, reward: float) -> None:
-        if not self.stationary:
-            self._random_walk_true_Q()
+    def _random_walk(self) -> None:
+        '''
+        Emulate non-stationarity of the problem
+        '''
+        self.reward_means += np.random.normal(loc=0, scale=0.05, size=self.arms)
 
+    def softmax(self, x):
+        """Compute softmax values for each sets of scores in x."""
+        return np.exp(x) / np.sum(np.exp(x), axis=0)
+
+    def _updater_inc_error_non_stationary(self, action: int, reward: float, params: Dict) -> None:
+        self._random_walk()
+        self._updater_inc_error_stationary(action, reward, params)
+
+    def _updater_gradient_stationary(self, action: int, reward: float, params: Dict) -> None:
+        alpha = self._step_size_fn(self.nQ[action], action, self._step_size_params)
+        action_prob = self.softmax(self.Q)
+        if self.mean_R == 0:
+            self.mean_R = reward
+        # update vectorized
+        Q_action = self.Q[action] + alpha * (reward - self.mean_R) * (1 - action_prob[action])
+        self.Q -= alpha * (reward - self.mean_R) * action_prob
+        self.Q[action] = Q_action
+        # new reward average
+        self.mean_R = self.mean_R + (reward - self.mean_R)/self.step
+
+    def _updater_inc_error_stationary(self, action: int, reward: float, params: Dict) -> None:
         self.nQ[action] = self.nQ[action] + 1
-        self.Q[action] = self.Q[action] + \
-            (reward - self.Q[action]) * self.fn_step_size(self.nQ[action], action)
+        self.Q[action] += (reward - self.Q[action]) * \
+            self._step_size_fn(self.nQ[action], action, self._step_size_params)
 
-    def play(self, action: int) -> float:
-        assert 0 <= action < self.arms
-        # generate reward distribution for an action with the same parameters
-        reward = np.random.normal(
-            loc=self.reward_means[action], scale=self.stdev, size=1)
-        self._update_Q(action, reward)
+    def _action_selector_softmax(self, params) -> int:
+        return np.random.choice(self.arms, size=None, p=self.softmax(self.Q))
+
+    def _action_selector_greedy(self, params) -> int:
+        return np.argmax(self.Q)
+
+    def _action_selector_eps_greedy(self, params) -> int:
+        eps = params['eps']
+        if 0 == np.random.choice([0, 1], p=[eps, 1 - eps]):
+            action = np.random.choice(np.arange(self.arms, dtype=int))
+        else:
+            action = np.argmax(self.Q)
+        return action
+
+    def _action_selector_ucb(self, params) -> int:
+        c = params['c']  # confidence level
+        scores = np.zeros(self.arms)
+        for i in range(self.arms):
+            if self.nQ[i] == 0:
+                return i
+            scores[i] = self.Q[i] + c * np.sqrt(np.log(i + 1)/(self.nQ[i]))
+        return np.argmax(scores)
+
+    def _get_reward(self, action: int) -> float:
+        return np.random.normal(loc=self.reward_means[action], scale=self.stdev, size=None)
+
+    def play(self) -> float:
+        if not self._configured:
+            raise Exception("Bandit not configured. Call bandit.configure before playing.")
+        self.step += 1
+        action = self._action_selector_fn(self._action_selector_params)
+        reward = self._get_reward(action)
+        self._step_updater_fn(action, reward, self._step_updater_params)
         return reward
 
-    def play_best(self) -> float:
-        action = np.argmax(self.get_Q())
-        return self.play(action)
+    def play_many(self, steps: int) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+        rewards = np.zeros(steps)
+        best_rewards = np.zeros(steps)
+        for i in range(steps):
+            rewards[i] = self.play()
+            best_rewards[i] = np.max(self.reward_means)
+        return rewards, best_rewards
 
-    def play_random(self) -> float:
-        action = np.random.choice(np.arange(self.arms, dtype=int))
-        return self.play(action)
+    def configure(self, *,
+                  step_size: str = "sample_average", step_size_params: Dict = None,
+                  action_selector: str = "greedy", action_selector_params: Dict = None,
+                  step_updater: str = "inc_to_error_stationary", step_updater_params: Dict = None,
+                  init_Q: float = 0.) -> None:
 
+        self.init_Q = init_Q
 
-def estimate_reward(bandit: Bandit, arms: int, eps: float) -> float:
-    reward = 0
-    while True:
-        # Random action is taken with p = eps, greedy action is taken otherwise
-        if 0 == np.random.choice([0, 1], p=[eps, 1 - eps]):
-            reward = bandit.play_random()
+        # make it Dictionary to simplify typing
+        if action_selector_params is None:
+            self._action_selector_params = dict()
         else:
-            reward = bandit.play_best()
-        yield reward
+            self._action_selector_params = action_selector_params
+
+        # make it Dictionary to simplify typing
+        if step_size_params is None:
+            self._step_size_params = dict()
+        else:
+            self._step_size_params = step_size_params
+
+        # make it Dictionary to simplify typing
+        if step_updater_params is None:
+            self._step_updater_params = dict()
+        else:
+            self._step_updater_params = step_updater_params
+
+        # learning rate parameter applied by updaters
+        if step_size == "sample_average":
+            self._step_size_fn = self._step_sample_average
+        elif step_size == "constant":
+            self._step_size_fn = self._step_sample_constant
+
+        # they way to select an action to play
+        if action_selector == "greedy":
+            self._action_selector_fn = self._action_selector_greedy
+        elif action_selector == "eps_greedy":
+            self._action_selector_fn = self._action_selector_eps_greedy
+        elif action_selector == "ucb":
+            self._action_selector_fn = self._action_selector_ucb
+        elif action_selector == "softmax":
+            self._action_selector_fn = self._action_selector_softmax
+
+        # the way to update weights (Q)
+        if step_updater == "inc_to_error_stationary":
+            self._step_updater_fn = self._updater_inc_error_stationary
+        elif step_updater == "inc_to_error_non_stationary":
+            self._step_updater_fn = self._updater_inc_error_non_stationary
+        elif step_updater == "gradient_stationary":
+            self._step_updater_fn = self._updater_gradient_stationary
+
+        self.reset()
+        self._configured = True
 
 
-def run_bandits_common(n_bandits: int, steps: int, arms: int, mean: float, stdev: float,
-                       all_eps: List[float], stationary: bool, plot_title: str,
-                       fn_step_size: Callable = None, initQ: float = 0.) -> None:
+def create_bandits(bandits: int, arms: int, mean: float, stdev: float) -> List[Bandit]:
     all_bandits = []
-    # Initiliaze bandits once. We will re-use same bandits for different values of eps
-    for _ in range(n_bandits):
-        all_bandits.append(
-            Bandit(arms, mean, stdev, stationary=stationary, fn_step_size=fn_step_size, initQ=initQ))
+    for _ in range(bandits):
+        all_bandits.append(Bandit(arms, mean, stdev))
+    return all_bandits
 
-    # Find best reward assuming we taking best actions every time
-    all_true_q = []
-    for bandit in all_bandits:
-        all_true_q.append(np.max(bandit.get_true_Q()))
-    best_reward = np.mean(all_true_q)
 
-    # Estimate Q for different values of eps (eps-greedy)
-    plt.figure(figsize=(15, 10))
-    for eps in all_eps:
-        all_rewards = []
-        for bandit in all_bandits:
-            # reset reward estimations Q
-            bandit.reset()
-            bandit_rewards = []
-            gen_bandit = estimate_reward(bandit, arms, eps)
-            for _ in range(steps):
-                bandit_rewards.append(next(gen_bandit))
-            all_rewards.append(bandit_rewards)
-        # Get mean across all bandits for each step
-        steps_mean = np.mean(all_rewards, axis=0)
-        plt.plot(np.arange(steps), steps_mean, '-', label=("eps=%.2f" % eps))
+def calculate_rewards_mean_per_step(bandits, steps):
+    all_rewards = np.zeros((len(bandits), steps))
+    all_best_rewards = np.zeros((len(bandits), steps))
+    for i, bandit in enumerate(bandits):
+        all_rewards[i], all_best_rewards[i] = bandit.play_many(steps)
+    # Get mean across all bandits for each step
+    steps_mean = np.mean(all_rewards, axis=0)
+    step_mean_best = np.mean(all_best_rewards, axis=0)
+    return steps_mean, step_mean_best
 
-    plt.title(plot_title)
-    plt.plot(np.full(steps, best_reward), label="Stationary optimal reward")
+
+def draw_plot(title):
+    plt.title(title)
     plt.xlabel("Steps")
     plt.ylabel("Reward mean")
     plt.legend()
     plt.grid(True)
     plt.show()
 
+
+n_bandits = 1000
+steps = 1000
+arms = 10
+mean = 0.0
+stdev = 1.0
+# Use same problems for all tests
+bandits = create_bandits(n_bandits, arms, mean, stdev)
+
+fn_eps_greedy = partial(Bandit.configure,
+                        step_size="sample_average", step_size_params=None,
+                        step_updater="inc_to_error_non_stationary", step_updater_params=None,
+                        init_Q=0)
+
+for bandit in bandits:
+    fn_eps_greedy(bandit, action_selector="greedy", action_selector_params=None)
+steps_mean_greedy, steps_mean_greedy_best = calculate_rewards_mean_per_step(bandits, steps)
+
+for bandit in bandits:
+    fn_eps_greedy(bandit, action_selector="eps_greedy",  action_selector_params={'eps': 0.1})
+steps_mean_greedy_eps_01, steps_mean_greedy_eps_01_best = calculate_rewards_mean_per_step(bandits, steps)
+
+plt.figure(figsize=(15, 10))
+plt.plot(np.arange(steps), steps_mean_greedy, 'g', label="greedy")
+plt.plot(np.arange(steps), steps_mean_greedy_best, 'g--', label="greedy best")
+plt.plot(np.arange(steps), steps_mean_greedy_eps_01, 'r', label="eps-greedy 0.1")
+plt.plot(np.arange(steps), steps_mean_greedy_eps_01_best, 'r--', label="eps-greedy best 0.1")
+draw_plot("Greedy vs eps-greedy action selection, stationary case")
 
 if __name__ == '__main__':
     pass
