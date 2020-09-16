@@ -19,6 +19,7 @@ class Bandit:
         # generate reward means distribuition for each of k actions
         self.arms = arms
         self.reward_means = np.random.normal(loc=mean, scale=stdev, size=arms)
+        self._reward_means_init = self.reward_means
         self.mean = mean
         self.stdev = stdev
         self._configured = False
@@ -30,6 +31,8 @@ class Bandit:
         self.Q = np.full(self.arms, self.init_Q, dtype=float)
         # number of times each action is selected
         self.nQ = np.zeros(self.arms, dtype=int)
+        # reward means may spoil for non-stationary random walk
+        self.reward_means = self._reward_means_init
         # rewards mean
         self.mean_R = 0.0
         # global step counter
@@ -162,6 +165,8 @@ class Bandit:
             self._step_size_fn = self._step_constant
         elif step_size == "step_unbiased":
             self._step_size_fn = self._step_unbiased
+        else:
+            raise Exception("Incorrect step_size parameter")
 
         # they way to select an action to play
         if action_selector == "eps_greedy":
@@ -170,6 +175,8 @@ class Bandit:
             self._action_selector_fn = self._action_selector_ucb
         elif action_selector == "softmax":
             self._action_selector_fn = self._action_selector_softmax
+        else:
+            raise Exception("Incorrect action_selector parameter")
 
         # the way to update weights (Q)
         if step_updater == "stationary":
@@ -180,9 +187,18 @@ class Bandit:
             self._step_updater_fn = self._updater_gradient_stationary
         elif step_updater == "gradient_non_stationary":
             self._step_updater_fn = self._updater_gradient_non_stationary
+        else:
+            raise Exception("Incorrect step_updater parameter")
 
         self.reset()
         self._configured = True
+
+
+def create_bandits(bandits: int, arms: int, mean: float, stdev: float) -> List[Bandit]:
+    all_bandits = []
+    for _ in range(bandits):
+        all_bandits.append(Bandit(arms, mean, stdev))
+    return all_bandits
 
 
 if __name__ == '__main__':
