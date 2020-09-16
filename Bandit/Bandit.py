@@ -1,4 +1,3 @@
-from functools import partial
 import numpy as np  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
 from typing import List, Dict, Tuple
@@ -8,7 +7,11 @@ class Bandit:
     '''
     k-armed bandit problem emulator. Each Bandit instance generate a normal distribuiton for action reward means.
     Each action rewards also has normal distribuiton with the same mean and stdev.
-    The 'play' function returns a reward based on supported algorithms passed by 'configure' function
+    The 'play' function returns a reward based on supported algorithms passed by 'configure' function.
+    See Jupyter Notebook for usage and experiments.
+
+    Class developed to follow exercises from book "Reinforcement Learning: An Introduction. Second edition."
+    by Richard S. Sutton and Andrew G. Barto
     '''
 
     def __init__(self, arms: int, mean: float, stdev: float) -> None:
@@ -31,13 +34,21 @@ class Bandit:
         self.mean_R = 0.0
         # global step counter
         self.step = 0
+        # for unbiased step size
+        self.o = np.zeros(self.arms)
 
-    def _step_sample_average(self, n: int, action: int, params: Dict) -> float:
+    def _step_average(self, n: int, action: int, params: Dict) -> float:
         return 1/n
 
-    def _step_sample_constant(self, n: int, action: int, params: Dict) -> float:
+    def _step_constant(self, n: int, action: int, params: Dict) -> float:
         alpha = params['alpha']
         return alpha
+
+    def _step_unbiased(self, n: int, action: int, params: Dict) -> float:
+        alpha = params['alpha']
+        o_n = self.o[action] + alpha * (1 - self.o[action])
+        self.o[action] = o_n
+        return alpha/o_n
 
     def _random_walk(self) -> None:
         '''
@@ -65,6 +76,10 @@ class Bandit:
         # new reward average
         self.mean_R = self.mean_R + (reward - self.mean_R)/self.step
 
+    def _updater_gradient_non_stationary(self, action: int, reward: float, params: Dict) -> None:
+        self._random_walk()
+        self._updater_gradient_stationary(action, reward, params)
+
     def _updater_inc_error_stationary(self, action: int, reward: float, params: Dict) -> None:
         self.nQ[action] = self.nQ[action] + 1
         self.Q[action] += (reward - self.Q[action]) * \
@@ -73,11 +88,12 @@ class Bandit:
     def _action_selector_softmax(self, params) -> int:
         return np.random.choice(self.arms, size=None, p=self.softmax(self.Q))
 
-    def _action_selector_greedy(self, params) -> int:
-        return np.argmax(self.Q)
-
     def _action_selector_eps_greedy(self, params) -> int:
-        eps = params['eps']
+        try:
+            eps = params['eps']
+        except KeyError:
+            eps = 0
+
         if 0 == np.random.choice([0, 1], p=[eps, 1 - eps]):
             action = np.random.choice(np.arange(self.arms, dtype=int))
         else:
@@ -114,9 +130,9 @@ class Bandit:
         return rewards, best_rewards
 
     def configure(self, *,
-                  step_size: str = "sample_average", step_size_params: Dict = None,
-                  action_selector: str = "greedy", action_selector_params: Dict = None,
-                  step_updater: str = "inc_to_error_stationary", step_updater_params: Dict = None,
+                  step_size: str = "average", step_size_params: Dict = None,
+                  action_selector: str = "eps_greedy", action_selector_params: Dict = None,
+                  step_updater: str = "stationary", step_updater_params: Dict = None,
                   init_Q: float = 0.) -> None:
 
         self.init_Q = init_Q
@@ -140,15 +156,15 @@ class Bandit:
             self._step_updater_params = step_updater_params
 
         # learning rate parameter applied by updaters
-        if step_size == "sample_average":
-            self._step_size_fn = self._step_sample_average
+        if step_size == "average":
+            self._step_size_fn = self._step_average
         elif step_size == "constant":
-            self._step_size_fn = self._step_sample_constant
+            self._step_size_fn = self._step_constant
+        elif step_size == "step_unbiased":
+            self._step_size_fn = self._step_unbiased
 
         # they way to select an action to play
-        if action_selector == "greedy":
-            self._action_selector_fn = self._action_selector_greedy
-        elif action_selector == "eps_greedy":
+        if action_selector == "eps_greedy":
             self._action_selector_fn = self._action_selector_eps_greedy
         elif action_selector == "ucb":
             self._action_selector_fn = self._action_selector_ucb
@@ -156,15 +172,18 @@ class Bandit:
             self._action_selector_fn = self._action_selector_softmax
 
         # the way to update weights (Q)
-        if step_updater == "inc_to_error_stationary":
+        if step_updater == "stationary":
             self._step_updater_fn = self._updater_inc_error_stationary
-        elif step_updater == "inc_to_error_non_stationary":
+        elif step_updater == "non_stationary":
             self._step_updater_fn = self._updater_inc_error_non_stationary
         elif step_updater == "gradient_stationary":
             self._step_updater_fn = self._updater_gradient_stationary
+        elif step_updater == "gradient_non_stationary":
+            self._step_updater_fn = self._updater_gradient_non_stationary
 
         self.reset()
         self._configured = True
+
 
 if __name__ == '__main__':
     pass
