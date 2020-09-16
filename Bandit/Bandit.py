@@ -19,7 +19,7 @@ class Bandit:
         # generate reward means distribuition for each of k actions
         self.arms = arms
         self.reward_means = np.random.normal(loc=mean, scale=stdev, size=arms)
-        self._reward_means_init = self.reward_means
+        self._reward_means_init = np.copy(self.reward_means)
         self.mean = mean
         self.stdev = stdev
         self._configured = False
@@ -32,7 +32,7 @@ class Bandit:
         # number of times each action is selected
         self.nQ = np.zeros(self.arms, dtype=int)
         # reward means may spoil for non-stationary random walk
-        self.reward_means = self._reward_means_init
+        self.reward_means = np.copy(self._reward_means_init)
         # rewards mean
         self.mean_R = 0.0
         # global step counter
@@ -192,13 +192,6 @@ class Bandit:
 
         self.reset()
         self._configured = True
-
-
-def create_bandits(bandits: int, arms: int, mean: float, stdev: float) -> List[Bandit]:
-    all_bandits = []
-    for _ in range(bandits):
-        all_bandits.append(Bandit(arms, mean, stdev))
-    return all_bandits
 
 
 if __name__ == '__main__':
