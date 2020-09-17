@@ -51,7 +51,10 @@ class Bandit:
         alpha = params['alpha']
         o_n = self.o[action] + alpha * (1 - self.o[action])
         self.o[action] = o_n
-        return alpha/o_n
+        if o_n == 0:
+            return alpha
+        else:
+            return alpha/o_n
 
     def _random_walk(self) -> None:
         '''
